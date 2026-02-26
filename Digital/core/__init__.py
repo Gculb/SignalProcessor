@@ -1,3 +1,3 @@
-from core.signalProcessor import SignalProcessor          
+from Digital.core.signal_processor import SignalProcessor          
 
 __all__ = ['SignalProcessor']
