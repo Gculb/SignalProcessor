@@ -1,5 +1,9 @@
-import io.file_loader as FileLoader
-import io.signal_generator as SignalGenerator
-import io.file_saver as FileSaver 
+from Digital.io.file_loader import load_wav
+from Digital.io.signal_generator import generate_noisy_signal
+from Digital.io.file_saver import save_wav
 
-__all__ = ['FileLoader', 'SignalGenerator', 'FileSaver']
+__all__ = [
+    "load_wav",
+    "generate_noisy_signal",
+    "save_wav",
+]

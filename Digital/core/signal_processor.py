@@ -4,7 +4,7 @@ import scipy.signal as signal
 
 
 class SignalProcessor:
-    def __init__(self, signal_data, sample_rate):
+    def __init__(self,  signal_data, sample_rate):
         self.signal = signal_data
         self.sample_rate = sample_rate 
     def normalize(self):
@@ -35,7 +35,17 @@ class SignalProcessor:
         b, a = signal.butter(4, [low_cutoff / (0.5 * self.sample_rate), high_cutoff / (0.5 * self.sample_rate)], btype='band')
         self.signal = signal.filtfilt(b, a, self.signal)
         return self.signal
-
+    def plot_frequency_domain(self, xlim=None):
+        freqs, mags = self.compute_fft()
+        plt.plot(freqs, mags)
+        plt.xlabel("Frequency (Hz)")
+        plt.ylabel("Magnitude")
+        plt.title("Frequency Domain (FFT)")
+        
+        if xlim is not None:
+            plt.xlim(0, xlim)
+            
+        plt.show()
     def plot_time_domain(self):
         t = np.arange(len(self.signal)) / self.sample_rate
         plt.plot(t, self.signal)
