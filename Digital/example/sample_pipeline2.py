@@ -26,9 +26,8 @@ def main():
     sp.plot_frequency_domain(xlim=2000)
 
     print("Dominant frequency:", sp.get_dominant_frequency())
-
-    sp.apply_bandpass(150, 500)
-    sp.normalize()
+    sp.apply_highpass(80)
+    sp.apply_lowpass(3900)
     sp.plot_time_domain()
     sp.plot_frequency_domain(xlim=2000)
 
