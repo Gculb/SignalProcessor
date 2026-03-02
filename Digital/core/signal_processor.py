@@ -57,3 +57,19 @@ class SignalProcessor:
         nyquist = self.sample_rate / 2
         if cutoff <= 0 or cutoff >= nyquist:
             raise ValueError(f"Cutoff must be between 0 and {nyquist} Hz")
+        
+    def get_frequency_spectrum(self):
+        N = len(self.signal)
+
+        fft_vals = np.fft.fft(self.signal)
+        fft_vals = np.abs(fft_vals)[:N // 2]
+
+        freqs = np.fft.fftfreq(N, 1 / self.sample_rate)
+        freqs = freqs[:N // 2]
+
+        return freqs, fft_vals
+
+    def get_dominant_frequency(self):
+        freqs, spectrum = self.get_frequency_spectrum()
+        peak_index = np.argmax(spectrum)
+        return freqs[peak_index]

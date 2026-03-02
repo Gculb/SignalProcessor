@@ -1,5 +1,5 @@
-from scipy.io import wavfile
+import soundfile as sf
 
 def load_wav(path):
-    sample_rate, data = wavfile.read(path)
-    return sample_rate, data 
+    data, sample_rate = sf.read(path)
+    return sample_rate, data
