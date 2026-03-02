@@ -108,6 +108,10 @@ numpy – numerical computing
 scipy – signal processing functions
 
 matplotlib – plotting and visualization
+# FUTURE GOALS 
+
+- implement hardware based SP
+- implement continous SP (look for frequency)
 
 License
 
