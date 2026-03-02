@@ -1,5 +1,6 @@
 from Digital.core.signal_processor import SignalProcessor
 from Digital.io.file_loader import load_wav
+from Digital.io.file_saver import save_wav
 import numpy as np
 from pathlib import Path
 
@@ -26,10 +27,14 @@ def main():
 
     print("Dominant frequency:", sp.get_dominant_frequency())
 
-    sp.apply_bandpass(200, 300)
+    sp.apply_bandpass(150, 500)
     sp.normalize()
     sp.plot_time_domain()
     sp.plot_frequency_domain(xlim=2000)
+
+    save_path = project_root / "Digital" / "processed_files" / "M1F1-Alaw-AFsp_processed.wav"
+    save_wav(save_path, sp.sample_rate, sp.signal)
+
 
 if __name__ == "__main__":
     main()

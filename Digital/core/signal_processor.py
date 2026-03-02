@@ -35,6 +35,11 @@ class SignalProcessor:
         b, a = signal.butter(4, [low_cutoff / (0.5 * self.sample_rate), high_cutoff / (0.5 * self.sample_rate)], btype='band')
         self.signal = signal.filtfilt(b, a, self.signal)
         return self.signal
+    def apply_notch(self, notch_freq, quality_factor=30):
+        self._validate_cutoff(notch_freq)
+        b, a = signal.iirnotch(notch_freq / (0.5 * self.sample_rate), quality_factor)
+        self.signal = signal.filtfilt(b, a, self.signal)
+        return self.signal
     def plot_frequency_domain(self, xlim=None):
         freqs, mags = self.compute_fft()
         plt.plot(freqs, mags)
@@ -73,3 +78,4 @@ class SignalProcessor:
         freqs, spectrum = self.get_frequency_spectrum()
         peak_index = np.argmax(spectrum)
         return freqs[peak_index]
+    #a
