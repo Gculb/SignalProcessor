@@ -1,118 +1,149 @@
-Signal Processor 
-Overview
+# Signal Processor
 
-The Signal Processor is a modular Python project designed to demonstrate fundamental digital signal processing (DSP) concepts. This project provides a software-based framework to:
+## Overview
 
-Process and manipulate audio or synthetic signals
+Signal Processor is split into two connected parts:
 
-Apply common DSP filters (highpass, lowpass, bandpass)
+- [Digital](/C:/Users/Gculb/Desktop/SignalProcessor/Digital), a Python prototype for offline signal analysis, WAV inspection, filtering, and experimentation
+- [Hardware](/C:/Users/Gculb/Desktop/SignalProcessor/Hardware), an Arduino-oriented implementation for running a simplified signal-cleaning pipeline on embedded hardware
 
-Analyze signals in the frequency domain using FFT
+The purpose of the project is to prototype a DSP pipeline in software first, learn what kinds of noise are present in the recordings, and then carry a practical version of that cleanup path onto hardware.
 
-Visualize signals in both time and frequency domains
+## Project Split
 
-This project serves as a software prototype for a signal processing pipeline, which can later be extended to real-time hardware (Arduino, microcontrollers) or API-driven backends.
+### Digital
 
-Features
+The `Digital` folder is the analysis and prototyping side of the project. It is used to:
 
-Core DSP Engine (SignalProcessor)
+- load and inspect sample WAV files
+- generate synthetic test signals
+- analyze signals in the time and frequency domains
+- apply DSP filters such as high-pass, low-pass, band-pass, and notch filters
+- test denoising ideas before moving them to hardware
+- save cleaned output files for comparison
 
-Normalize signals
+This side of the repo is where we determine what the real recordings contain and what filter settings are worth deploying.
 
-Apply highpass, lowpass, and bandpass filters
+### Hardware
 
-Compute and visualize frequency spectrum
+The `Hardware` folder is the embedded side of the project. It is used to:
 
-Visualize time-domain signals
+- process live samples from a microphone or sensor
+- subtract optional microphone-noise and sensor-noise reference inputs
+- reduce random noise on-device
+- run a hardware-friendly cleanup chain with DC removal, filtering, notch suppression, smoothing, and gating
+- provide an Arduino sketch and reusable signal processor implementation
 
-Signal Generation
+This side is not a direct port of the Python stack. It is a practical embedded implementation built from the lessons learned in `Digital`.
 
-Synthetic sine waves
+## Current Capabilities
 
-Noisy signals for testing and demonstration
+### Digital capabilities
 
-Extensible Architecture
+- `SignalProcessor` class for core DSP operations
+- FFT-based spectrum inspection
+- time-domain and frequency-domain plotting
+- synthetic sine and noisy signal generation
+- WAV loading and saving
+- sample pipelines for inspecting and cleaning recorded files
 
-Layered structure separating core DSP, I/O, and examples
+### Hardware capabilities
 
-Easily expandable for hardware input, streaming, or API integration
+- reusable Arduino-compatible signal processor implementation
+- support for:
+  - main signal input
+  - microphone noise reference input
+  - sensor noise reference input
+  - random noise estimate input
+- filtering stages suitable for embedded use
 
-Folder Structure
-signal-processor/
-│
-├── core/
-│   ├── __init__.py         # Package initializer
-│   └── signalProcessor.py  # DSP core class
-│
-├── io/
-│   ├── __init__.py         # Exposes generators/loaders
-│   ├── signal_generator.py # Synthetic signal creation
-│   └── file_loader.py      # Audio file loading
-│
-├── examples/
-│   └── demo_pipeline.py    # Example usage of DSP pipeline
-│
-├── tests/
-│   └── test_signal_processor.py # Unit tests for DSP class
-│
-├── requirements.txt        # Python dependencies
-└── README.md               # Project overview
-Installation
+## Repository Layout
 
-Clone the repository:
+```text
+SignalProcessor/
+|
++-- Digital/
+|   +-- core/
+|   |   +-- __init__.py
+|   |   +-- signal_processor.py
+|   +-- io/
+|   |   +-- __init__.py
+|   |   +-- file_loader.py
+|   |   +-- file_saver.py
+|   |   +-- signal_generator.py
+|   +-- example/
+|   |   +-- sample_pipeline.py
+|   |   +-- sample_pipeline2.py
+|   +-- sample_files/
+|   +-- processed_files/
+|
++-- Hardware/
+|   +-- ArduinoSignalProcessor.ino
+|   +-- SignalProcessor.h
+|   +-- SignalProcessor.cpp
+|   +-- README.md
+|
++-- README.md
+```
 
-git clone https://github.com/yourusername/signal-processor.git
-cd signal-processor
+## How The Two Sides Work Together
 
-Create a virtual environment and install dependencies:
+The intended workflow is:
 
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-venv\Scripts\activate     # Windows
-pip install -r requirements.txt
-Usage Example
-from core.signalProcessor import SignalProcessor
-from io.signal_generator import generate_noisy_signal
+1. Use `Digital` to inspect sample files and identify what noise is actually present.
+2. Tune filtering and denoising behavior in Python where iteration is faster.
+3. Recreate the useful parts of that pipeline in `Hardware` using embedded-friendly code.
+4. Deploy the hardware version to a board for live signal cleanup.
 
-SAMPLE_RATE = 1000  # Hz
-DURATION = 2        # seconds
+## Digital Usage
 
-# Generate synthetic signal
-signal = generate_noisy_signal(freq=50, duration=DURATION, sample_rate=SAMPLE_RATE)
+The Python side depends on packages such as `numpy`, `scipy`, `matplotlib`, and `soundfile`.
 
-# Create processor
-sp = SignalProcessor(signal, SAMPLE_RATE)
+Example workflow:
 
-# Apply processing
-sp.apply_lowpass(100)
-sp.apply_highpass(10)
-sp.normalize()
+```python
+from Digital.core.signal_processor import SignalProcessor
+from Digital.io.signal_generator import generate_noisy_signal
 
-# Visualize
-sp.plot_time_domain()
-sp.plot_frequency_domain()
-Future Extensions
+sample_rate = 1000
+duration = 2
 
-Real-time audio input or streaming
+signal = generate_noisy_signal(freq=50, duration=duration, sample_rate=sample_rate)
+processor = SignalProcessor(signal, sample_rate)
 
-API integration for remote signal processing
+processor.apply_lowpass(100)
+processor.apply_highpass(10)
+processor.normalize()
+processor.plot_time_domain()
+processor.plot_frequency_domain()
+```
 
-Hardware integration (Arduino or other microcontrollers)
+For recorded files, the sample pipeline in [sample_pipeline2.py](/C:/Users/Gculb/Desktop/SignalProcessor/Digital/example/sample_pipeline2.py) inspects the WAV files in `Digital/sample_files` and writes cleaned output into `Digital/processed_files`.
 
-Advanced DSP operations (filters, windowing, spectral analysis)
+## Hardware Usage
 
-Dependencies
+The Arduino-facing implementation lives in:
 
-numpy – numerical computing
+- [ArduinoSignalProcessor.ino](/C:/Users/Gculb/Desktop/SignalProcessor/Hardware/ArduinoSignalProcessor.ino)
+- [SignalProcessor.h](/C:/Users/Gculb/Desktop/SignalProcessor/Hardware/SignalProcessor.h)
+- [SignalProcessor.cpp](/C:/Users/Gculb/Desktop/SignalProcessor/Hardware/SignalProcessor.cpp)
 
-scipy – signal processing functions
+The embedded processor is designed for real-time use and accepts:
 
-matplotlib – plotting and visualization
-# FUTURE GOALS 
+- the main sample
+- optional microphone noise reference
+- optional sensor noise reference
+- optional random-noise estimate
 
-- implement hardware based SP
-- implement continous SP (look for frequency)
+This makes the hardware implementation suitable for live microphone-plus-sensor setups where noise can come from multiple sources.
 
-License
+## Goals
 
-MIT License – Free to use, modify, and distribute.
+- improve the digital analysis pipeline so it better identifies useful signal versus noise
+- continue tuning the hardware pipeline based on real recordings
+- support continuous signal processing and frequency tracking
+- strengthen the bridge between offline WAV analysis and real-time embedded deployment
+
+## License
+
+MIT License.
