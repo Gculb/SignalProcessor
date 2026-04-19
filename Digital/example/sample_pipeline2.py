@@ -1,38 +1,51 @@
+from pathlib import Path
+
 from Digital.core.signal_processor import SignalProcessor
 from Digital.io.file_loader import load_wav
 from Digital.io.file_saver import save_wav
-import numpy as np
-from pathlib import Path
 
-#this loads a sample file and processes it using the SignalProcessor class. It demonstrates how to read a WAV file, normalize the audio data, and visualize both the time domain and frequency domain representations of the signal. Additionally, it applies a bandpass filter to isolate frequencies between 200 and 300 Hz, normalizes the filtered signal, and visualizes the results again. The program also prints the dominant frequency in the original signal before filtering.
-def main():
 
-    
-    project_root = Path(__file__).resolve().parents[2]
-
-    wav_path = project_root / "Digital" / "sample_files" / "M1F1-Alaw-AFsp.wav"
-
+def inspect_and_process_file(wav_path, output_dir):
     sample_rate, data = load_wav(wav_path)
+    processor = SignalProcessor(data, sample_rate)
 
-    if len(data.shape) > 1:
-        data = np.mean(data, axis=1)
+    metadata = processor.inspect_signal()
+    print(f"\nInspecting: {wav_path.name}")
+    print(
+        "  "
+        f"sample_rate={metadata['sample_rate']} Hz, "
+        f"channels={metadata['channels']}, "
+        f"duration={metadata['duration_seconds']:.3f} s, "
+        f"dominant_frequency={metadata['dominant_frequency_hz']:.1f} Hz"
+    )
+    print(f"  detected_noise_peaks={metadata['noise_peaks_hz']}")
 
-    data = data.astype(np.float32)
-    data /= np.max(np.abs(data))
+    if metadata["channels"] > 1:
+        processor.to_mono(strategy="best_speech_band")
+        print("  selected mono strategy=best_speech_band")
 
-    sp = SignalProcessor(data, sample_rate)
+    detected_noise = processor.denoise_speech()
+    output_path = output_dir / f"{wav_path.stem}_cleaned.wav"
+    save_wav(output_path, processor.sample_rate, processor.signal)
 
-    sp.plot_time_domain()
-    sp.plot_frequency_domain(xlim=2000)
+    print(
+        "  "
+        f"applied highpass=80 Hz, lowpass=3400 Hz, "
+        f"notches={detected_noise}, saved={output_path.name}"
+    )
 
-    print("Dominant frequency:", sp.get_dominant_frequency())
-    sp.apply_highpass(80)
-    sp.apply_lowpass(3900)
-    sp.plot_time_domain()
-    sp.plot_frequency_domain(xlim=2000)
 
-    save_path = project_root / "Digital" / "processed_files" / "M1F1-Alaw-AFsp_processed.wav"
-    save_wav(save_path, sp.sample_rate, sp.signal)
+def main():
+    project_root = Path(__file__).resolve().parents[1]
+    sample_dir = project_root / "sample_files"
+    output_dir = project_root / "processed_files"
+
+    wav_files = sorted(sample_dir.glob("*.wav"))
+    if not wav_files:
+        raise FileNotFoundError(f"No WAV files found in {sample_dir}")
+
+    for wav_path in wav_files:
+        inspect_and_process_file(wav_path, output_dir)
 
 
 if __name__ == "__main__":

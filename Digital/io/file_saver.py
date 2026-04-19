@@ -2,7 +2,7 @@ import numpy as np
 import soundfile as sf
 from pathlib import Path
 
-def save_wav(path, sample_rate, data):
+def save_wav(path, sample_rate, data, prompt=False):
 
     path = Path(path)
 
@@ -20,7 +20,10 @@ def save_wav(path, sample_rate, data):
     if data.ndim == 1:
         data = data.reshape(-1, 1)
 
-    userInput = input("Do you want to save the file? (y/n): ")
+    if prompt:
+        userInput = input("Do you want to save the file? (y/n): ")
+    else:
+        userInput = "y"
 
     if userInput.lower() == "y":
         sf.write(str(path), data, sample_rate)
