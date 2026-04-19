@@ -137,6 +137,47 @@ The embedded processor is designed for real-time use and accepts:
 
 This makes the hardware implementation suitable for live microphone-plus-sensor setups where noise can come from multiple sources.
 
+## Benchmarks
+
+### WAV benchmark
+
+The Python benchmark script lives at [benchmark_wavs.py](/C:/Users/Gculb/Desktop/SignalProcessor/Digital/example/benchmark_wavs.py).
+
+Run it with:
+
+```powershell
+$env:PYTHONPATH='C:\Users\Gculb\Desktop\SignalProcessor'
+python Digital\example\benchmark_wavs.py
+```
+
+Current measured results from the cleaned sample files:
+
+- `M1F1-Alaw-AFsp.wav`: `+4.93 dB` speech-to-low-noise improvement and `+0.98 dB` estimated noise-floor improvement
+- `M1F1-AlawWE-AFsp.wav`: `+4.93 dB` speech-to-low-noise improvement and `+0.98 dB` estimated noise-floor improvement
+- `6_Channel_ID.wav`: `+1.25 dB` speech-to-low-noise improvement after channel selection and cleanup
+
+These numbers come from comparing the original WAV files in `Digital/sample_files` against the cleaned outputs in `Digital/processed_files`.
+
+### Arduino benchmark
+
+The hardware timing benchmark lives at [ArduinoBenchmark.ino](/C:/Users/Gculb/Desktop/SignalProcessor/Hardware/ArduinoBenchmark.ino).
+
+It measures:
+
+- average processing time per sample
+- max processing time per sample
+- per-sample timing budget at the target sample rate
+- estimated CPU usage at the configured sample rate
+
+Upload the sketch to your board and open the serial monitor at `115200` baud to capture hardware timing results you can cite.
+
+## Resume Bullets
+
+- Built a two-stage DSP system in Python and Arduino C++ that analyzed recorded WAV files offline and translated the resulting denoising pipeline into an embedded real-time signal processor.
+- Developed a modular signal-processing pipeline with FFT analysis, high-pass/low-pass/notch filtering, channel selection, and noise-reference subtraction for microphone and sensor inputs.
+- Benchmarked denoising performance on real sample recordings, improving speech-to-low-noise ratio by up to `4.93 dB` and reducing estimated noise floor by about `0.98 dB` on 8 kHz A-law speech samples.
+- Implemented an Arduino-compatible hardware pipeline with DC offset removal, noise gating, smoothing, and reference-based noise suppression, plus a serial benchmark for measuring per-sample processing cost on-device.
+
 ## Goals
 
 - improve the digital analysis pipeline so it better identifies useful signal versus noise
