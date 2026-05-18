@@ -153,6 +153,8 @@ The intended workflow is:
 
 The browser demo serves a local website from `Digital/web_server.py`. It captures microphone audio, sends short audio chunks to Python, processes the signal, and updates metrics in the page.
 
+![Signal Processor live microphone demo](gifs/demo.gif)
+
 From the repository root:
 
 ```powershell
