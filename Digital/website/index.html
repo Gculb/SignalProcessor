@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Digital Signal Processor</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Live microphone endpoint</p>
+            <h1>Digital Signal Processor</h1>
+          </div>
+          <div class="status" id="status">
+            <span class="status-dot"></span>
+            <span id="statusText">Disconnected</span>
+          </div>
+        </header>
+
+        <section class="controls">
+          <button class="primary" id="startButton" type="button">Start microphone</button>
+          <button id="stopButton" type="button" disabled>Stop</button>
+          <label>
+            <span>Highpass</span>
+            <input id="highpassInput" type="number" min="1" max="2000" value="80">
+          </label>
+          <label>
+            <span>Lowpass</span>
+            <input id="lowpassInput" type="number" min="100" max="12000" value="3400">
+          </label>
+          <label class="toggle">
+            <input id="noiseToggle" type="checkbox" checked>
+            <span>Noise detection</span>
+          </label>
+        </section>
+
+        <section class="meters" aria-label="Signal metrics">
+          <article>
+            <span>RMS</span>
+            <strong id="rmsMetric">0.000000</strong>
+          </article>
+          <article>
+            <span>Peak</span>
+            <strong id="peakMetric">0.000000</strong>
+          </article>
+          <article>
+            <span>dBFS</span>
+            <strong id="dbfsMetric">-120.00</strong>
+          </article>
+          <article>
+            <span>Dominant Hz</span>
+            <strong id="frequencyMetric">0.00</strong>
+          </article>
+          <article>
+            <span>Zero crossings</span>
+            <strong id="zcrMetric">0.00000</strong>
+          </article>
+          <article>
+            <span>Latency</span>
+            <strong id="latencyMetric">0 ms</strong>
+          </article>
+        </section>
+
+        <section class="visual-grid">
+          <div class="panel">
+            <div class="panel-header">
+              <h2>Waveform</h2>
+              <span id="durationLabel">0.00 s</span>
+            </div>
+            <canvas id="waveformCanvas" width="900" height="260"></canvas>
+          </div>
+          <div class="panel">
+            <div class="panel-header">
+              <h2>Spectrum</h2>
+              <span>0-5 kHz</span>
+            </div>
+            <canvas id="spectrumCanvas" width="900" height="260"></canvas>
+          </div>
+        </section>
+
+        <section class="details">
+          <div>
+            <span>Server filters</span>
+            <p id="filterLabel">Waiting for audio</p>
+          </div>
+          <div>
+            <span>Detected noise peaks</span>
+            <p id="noiseLabel">None</p>
+          </div>
+        </section>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

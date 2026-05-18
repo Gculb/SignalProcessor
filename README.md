@@ -2,27 +2,39 @@
 
 ## Overview
 
-Signal Processor is split into two connected parts:
+Signal Processor is a digital signal processing project that connects offline audio analysis, a live browser microphone demo, and an Arduino-oriented embedded implementation.
 
-- [Digital](/C:/Users/Gculb/Desktop/SignalProcessor/Digital), a Python prototype for offline signal analysis, WAV inspection, filtering, and experimentation
-- [Hardware](/C:/Users/Gculb/Desktop/SignalProcessor/Hardware), an Arduino-oriented implementation for running a simplified signal-cleaning pipeline on embedded hardware
+The project is split into two connected parts:
 
-The purpose of the project is to prototype a DSP pipeline in software first, learn what kinds of noise are present in the recordings, and then carry a practical version of that cleanup path onto hardware.
+- [Digital](Digital), a Python prototype for WAV inspection, FFT analysis, filtering, denoising experiments, and a browser-based microphone processing endpoint
+- [Hardware](Hardware), an Arduino-oriented implementation for running a simplified signal-cleaning pipeline on embedded hardware
+
+The goal is to prototype the DSP pipeline in software first, learn what kinds of noise are present in real recordings, visualize the results, and then carry the useful cleanup path onto hardware.
+
+## What This Project Shows
+
+- A Python DSP pipeline for inspecting, filtering, and cleaning WAV signals
+- A live client/server website that captures microphone audio in the browser and sends chunks to Python for processing
+- Real-time metrics including RMS, peak amplitude, dBFS, dominant frequency, zero-crossing rate, detected noise peaks, waveform, and spectrum
+- An Arduino-compatible signal processor that applies embedded-friendly filtering and noise suppression
+- Benchmarks for both WAV denoising quality and embedded per-sample timing
 
 ## Project Split
 
 ### Digital
 
-The `Digital` folder is the analysis and prototyping side of the project. It is used to:
+The `Digital` folder is the analysis, prototyping, and web-demo side of the project. It is used to:
 
 - load and inspect sample WAV files
 - generate synthetic test signals
 - analyze signals in the time and frequency domains
-- apply DSP filters such as high-pass, low-pass, band-pass, and notch filters
+- apply high-pass, low-pass, band-pass, and notch filters
+- detect prominent noise peaks
 - test denoising ideas before moving them to hardware
 - save cleaned output files for comparison
+- run a local website that processes microphone input through the Python backend
 
-This side of the repo is where we determine what the real recordings contain and what filter settings are worth deploying.
+This side of the repo is where filter settings are explored, measured, and visualized.
 
 ### Hardware
 
@@ -38,7 +50,7 @@ This side is not a direct port of the Python stack. It is a practical embedded i
 
 ## Current Capabilities
 
-### Digital capabilities
+### Digital Capabilities
 
 - `SignalProcessor` class for core DSP operations
 - FFT-based spectrum inspection
@@ -46,16 +58,50 @@ This side is not a direct port of the Python stack. It is a practical embedded i
 - synthetic sine and noisy signal generation
 - WAV loading and saving
 - sample pipelines for inspecting and cleaning recorded files
+- live browser microphone capture through the Web Audio API
+- Python HTTP endpoint for processing microphone chunks
+- dashboard metrics and canvas-based waveform/spectrum visualization
 
-### Hardware capabilities
+### Hardware Capabilities
 
 - reusable Arduino-compatible signal processor implementation
 - support for:
   - main signal input
   - microphone noise reference input
   - sensor noise reference input
-  - random noise estimate input
+  - random-noise estimate input
 - filtering stages suitable for embedded use
+- serial benchmark sketch for timing the processor on-device
+
+## What We Used
+
+### Python and DSP
+
+- Python
+- `numpy` for signal arrays, FFTs, RMS, waveform reduction, and metric calculations
+- `scipy.signal` for Butterworth filters, notch filters, Welch PSD analysis, and peak detection
+- `matplotlib` for offline time-domain and frequency-domain plots
+- `soundfile` for reading and writing WAV files
+
+### Browser Client
+
+- HTML, CSS, and JavaScript
+- Web Audio API for microphone capture
+- `fetch` for client/server communication
+- Canvas rendering for waveform and frequency-spectrum views
+
+### Server
+
+- Python standard-library `http.server`
+- JSON API endpoint at `/api/process`
+- Base64 float32 audio transport from browser to backend
+
+### Hardware
+
+- Arduino C++
+- `.ino` sketch entry points
+- reusable `SignalProcessor.h` and `SignalProcessor.cpp`
+- serial output for embedded timing benchmarks
 
 ## Repository Layout
 
@@ -72,12 +118,19 @@ SignalProcessor/
 |   |   +-- file_saver.py
 |   |   +-- signal_generator.py
 |   +-- example/
+|   |   +-- benchmark_wavs.py
 |   |   +-- sample_pipeline.py
 |   |   +-- sample_pipeline2.py
+|   +-- website/
+|   |   +-- index.html
+|   |   +-- app.js
+|   |   +-- styles.css
 |   +-- sample_files/
 |   +-- processed_files/
+|   +-- web_server.py
 |
 +-- Hardware/
+|   +-- ArduinoBenchmark.ino
 |   +-- ArduinoSignalProcessor.ino
 |   +-- SignalProcessor.h
 |   +-- SignalProcessor.cpp
@@ -86,14 +139,70 @@ SignalProcessor/
 +-- README.md
 ```
 
-## How The Two Sides Work Together
+## How The Pieces Work Together
 
 The intended workflow is:
 
 1. Use `Digital` to inspect sample files and identify what noise is actually present.
 2. Tune filtering and denoising behavior in Python where iteration is faster.
-3. Recreate the useful parts of that pipeline in `Hardware` using embedded-friendly code.
-4. Deploy the hardware version to a board for live signal cleanup.
+3. Use the browser endpoint to test live microphone signals against the Python pipeline.
+4. Recreate the useful parts of that pipeline in `Hardware` using embedded-friendly code.
+5. Deploy the hardware version to a board for live signal cleanup.
+
+## Live Website Demo
+
+The browser demo serves a local website from `Digital/web_server.py`. It captures microphone audio, sends short audio chunks to Python, processes the signal, and updates metrics in the page.
+
+From the repository root:
+
+```powershell
+cd Digital
+python web_server.py
+```
+
+Open:
+
+```text
+http://127.0.0.1:8000
+```
+
+The website shows:
+
+- microphone connection status
+- high-pass and low-pass filter controls
+- optional adaptive noise detection
+- RMS
+- peak amplitude
+- dBFS
+- dominant frequency
+- zero-crossing rate
+- request latency
+- processed waveform
+- processed frequency spectrum
+- detected noise peaks
+- filters applied by the server
+
+The processing API is:
+
+```text
+POST /api/process
+```
+
+Example request shape:
+
+```json
+{
+  "sampleRate": 48000,
+  "samples": "<base64 float32 audio buffer>",
+  "settings": {
+    "highpass": 80,
+    "lowpass": 3400,
+    "detectNoise": true
+  }
+}
+```
+
+The endpoint returns the processed metrics, waveform points, spectrum bins, detected noise peaks, and applied filters.
 
 ## Digital Usage
 
@@ -118,15 +227,22 @@ processor.plot_time_domain()
 processor.plot_frequency_domain()
 ```
 
-For recorded files, the sample pipeline in [sample_pipeline2.py](/C:/Users/Gculb/Desktop/SignalProcessor/Digital/example/sample_pipeline2.py) inspects the WAV files in `Digital/sample_files` and writes cleaned output into `Digital/processed_files`.
+For recorded files, the sample pipeline in [sample_pipeline2.py](Digital/example/sample_pipeline2.py) inspects the WAV files in `Digital/sample_files` and writes cleaned output into `Digital/processed_files`.
+
+Run it from the repository root with:
+
+```powershell
+$env:PYTHONPATH='C:\Users\Gculb\Desktop\SignalProcessor'
+python Digital\example\sample_pipeline2.py
+```
 
 ## Hardware Usage
 
 The Arduino-facing implementation lives in:
 
-- [ArduinoSignalProcessor.ino](/C:/Users/Gculb/Desktop/SignalProcessor/Hardware/ArduinoSignalProcessor.ino)
-- [SignalProcessor.h](/C:/Users/Gculb/Desktop/SignalProcessor/Hardware/SignalProcessor.h)
-- [SignalProcessor.cpp](/C:/Users/Gculb/Desktop/SignalProcessor/Hardware/SignalProcessor.cpp)
+- [ArduinoSignalProcessor.ino](Hardware/ArduinoSignalProcessor.ino)
+- [SignalProcessor.h](Hardware/SignalProcessor.h)
+- [SignalProcessor.cpp](Hardware/SignalProcessor.cpp)
 
 The embedded processor is designed for real-time use and accepts:
 
@@ -139,9 +255,9 @@ This makes the hardware implementation suitable for live microphone-plus-sensor 
 
 ## Benchmarks
 
-### WAV benchmark
+### WAV Benchmark
 
-The Python benchmark script lives at [benchmark_wavs.py](/C:/Users/Gculb/Desktop/SignalProcessor/Digital/example/benchmark_wavs.py).
+The Python benchmark script lives at [benchmark_wavs.py](Digital/example/benchmark_wavs.py).
 
 Run it with:
 
@@ -158,9 +274,9 @@ Current measured results from the cleaned sample files:
 
 These numbers come from comparing the original WAV files in `Digital/sample_files` against the cleaned outputs in `Digital/processed_files`.
 
-### Arduino benchmark
+### Arduino Benchmark
 
-The hardware timing benchmark lives at [ArduinoBenchmark.ino](/C:/Users/Gculb/Desktop/SignalProcessor/Hardware/ArduinoBenchmark.ino).
+The hardware timing benchmark lives at [ArduinoBenchmark.ino](Hardware/ArduinoBenchmark.ino).
 
 It measures:
 
@@ -169,11 +285,12 @@ It measures:
 - per-sample timing budget at the target sample rate
 - estimated CPU usage at the configured sample rate
 
-Upload the sketch to your board and open the serial monitor at `115200` baud to capture hardware timing results you can cite.
+Upload the sketch to your board and open the serial monitor at `115200` baud to capture hardware timing results.
 
 ## Resume Bullets
 
 - Built a two-stage DSP system in Python and Arduino C++ that analyzed recorded WAV files offline and translated the resulting denoising pipeline into an embedded real-time signal processor.
+- Developed a browser-based microphone dashboard that streams live audio chunks to a Python server and displays RMS, dBFS, dominant-frequency, waveform, spectrum, and detected-noise metrics.
 - Developed a modular signal-processing pipeline with FFT analysis, high-pass/low-pass/notch filtering, channel selection, and noise-reference subtraction for microphone and sensor inputs.
 - Benchmarked denoising performance on real sample recordings, improving speech-to-low-noise ratio by up to `4.93 dB` and reducing estimated noise floor by about `0.98 dB` on 8 kHz A-law speech samples.
 - Implemented an Arduino-compatible hardware pipeline with DC offset removal, noise gating, smoothing, and reference-based noise suppression, plus a serial benchmark for measuring per-sample processing cost on-device.
@@ -182,8 +299,8 @@ Upload the sketch to your board and open the serial monitor at `115200` baud to 
 
 - improve the digital analysis pipeline so it better identifies useful signal versus noise
 - continue tuning the hardware pipeline based on real recordings
-- support continuous signal processing and frequency tracking
-- strengthen the bridge between offline WAV analysis and real-time embedded deployment
+- support continuous live signal processing and frequency tracking
+- strengthen the bridge between offline WAV analysis, browser-based microphone testing, and real-time embedded deployment
 
 ## License
 
