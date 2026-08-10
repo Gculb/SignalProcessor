@@ -167,6 +167,7 @@ The browser demo serves a local website from `Digital/web_server.py`. It capture
 
 ![Signal Processor live microphone demo](gifs/demo.gif)
 
+OLD UI/INTERFACE
 From the repository root:
 
 ```powershell
