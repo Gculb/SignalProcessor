@@ -4,11 +4,13 @@ import base64
 import json
 import math
 import sys
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from pydantic import BaseModel, Field
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 PACKAGE_PARENT = PROJECT_ROOT.parent
@@ -16,95 +18,118 @@ if str(PACKAGE_PARENT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_PARENT))
 
 from Digital.core.signal_processor import SignalProcessor
+from Digital.ml_model import SignalClassifier
 
 STATIC_ROOT = PROJECT_ROOT / "website"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 MAX_SAMPLES = 96_000
 
+app = FastAPI(title="Digital Signal Processor API")
+classifier = SignalClassifier()
 
-class SignalRequestHandler(BaseHTTPRequestHandler):
-    server_version = "DigitalSignalServer/1.0"
 
-    def do_GET(self) -> None:
-        if self.path in ("/", "/index.html"):
-            self._send_static_file(STATIC_ROOT / "index.html", "text/html; charset=utf-8")
-            return
+class ProcessSettings(BaseModel):
+    highpass: float = Field(80.0, ge=0.0)
+    lowpass: float = Field(3400.0, ge=0.0)
+    detectNoise: bool = True
 
-        if self.path == "/app.js":
-            self._send_static_file(STATIC_ROOT / "app.js", "text/javascript; charset=utf-8")
-            return
 
-        if self.path == "/styles.css":
-            self._send_static_file(STATIC_ROOT / "styles.css", "text/css; charset=utf-8")
-            return
+class ProcessRequest(BaseModel):
+    sampleRate: int = Field(..., gt=0)
+    samples: Any
+    signalType: str = Field("generic", min_length=1)
+    deviceType: str = Field("generic", min_length=1)
+    settings: ProcessSettings = ProcessSettings()
 
-        if self.path == "/api/health":
-            self._send_json({"ok": True, "service": "digital-signal-processor"})
-            return
 
-        self._send_json({"error": "Not found"}, status=404)
+class ClassifyRequest(BaseModel):
+    sampleRate: int = Field(..., gt=0)
+    samples: Any
+    signalType: str = Field("generic", min_length=1)
+    deviceType: str = Field("generic", min_length=1)
 
-    def do_POST(self) -> None:
-        if self.path != "/api/process":
-            self._send_json({"error": "Not found"}, status=404)
-            return
 
-        try:
-            payload = self._read_json()
-            sample_rate = int(payload.get("sampleRate", 0))
-            samples = decode_samples(payload.get("samples"))
-            settings = payload.get("settings", {})
+@app.get("/", response_class=HTMLResponse)
+async def home() -> HTMLResponse:
+    return FileResponse(STATIC_ROOT / "index.html")
 
-            if sample_rate <= 0:
-                raise ValueError("sampleRate must be a positive integer.")
-            if samples.size == 0:
-                raise ValueError("samples must contain at least one value.")
-            if samples.size > MAX_SAMPLES:
-                samples = samples[-MAX_SAMPLES:]
 
-            result = process_signal(samples, sample_rate, settings)
-            self._send_json(result)
-        except (TypeError, ValueError, json.JSONDecodeError) as error:
-            self._send_json({"error": str(error)}, status=400)
-        except Exception as error:  # Keep the browser session alive while surfacing server failures.
-            self._send_json({"error": f"Processing failed: {error}"}, status=500)
+@app.get("/app.js")
+async def app_js() -> FileResponse:
+    return FileResponse(STATIC_ROOT / "app.js", media_type="text/javascript")
 
-    def log_message(self, format: str, *args: Any) -> None:
-        print(f"{self.address_string()} - {format % args}")
 
-    def _read_json(self) -> dict[str, Any]:
-        content_length = int(self.headers.get("Content-Length", "0"))
-        if content_length <= 0:
-            raise ValueError("Request body is required.")
-        raw_body = self.rfile.read(content_length)
-        return json.loads(raw_body.decode("utf-8"))
+@app.get("/styles.css")
+async def styles_css() -> FileResponse:
+    return FileResponse(STATIC_ROOT / "styles.css", media_type="text/css")
 
-    def _send_static_file(self, path: Path, content_type: str) -> None:
-        if not path.exists():
-            self._send_json({"error": f"Missing static file: {path.name}"}, status=404)
-            return
 
-        body = path.read_bytes()
-        self.send_response(200)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+@app.get("/api/health")
+async def health() -> dict[str, Any]:
+    return {"ok": True, "service": "digital-signal-processor"}
 
-    def _send_json(self, payload: dict[str, Any], status: int = 200) -> None:
-        body = json.dumps(payload).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+
+@app.post("/api/process")
+async def process(request: ProcessRequest) -> JSONResponse:
+    try:
+        samples = decode_samples(request.samples)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    if samples.size == 0:
+        raise HTTPException(status_code=400, detail="samples must contain at least one value.")
+
+    if samples.size > MAX_SAMPLES:
+        samples = samples[-MAX_SAMPLES:]
+
+    result = process_signal(samples, request.sampleRate, request.settings.dict())
+    result["classification"] = classifier.predict(
+        samples,
+        request.sampleRate,
+        request.signalType,
+        request.deviceType,
+    )
+    return JSONResponse(result)
+
+
+@app.post("/api/classify")
+async def classify(request: ClassifyRequest) -> JSONResponse:
+    try:
+        samples = decode_samples(request.samples)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    if samples.size == 0:
+        raise HTTPException(status_code=400, detail="samples must contain at least one value.")
+
+    if samples.size > MAX_SAMPLES:
+        samples = samples[-MAX_SAMPLES:]
+
+    classification = classifier.predict(
+        samples,
+        request.sampleRate,
+        request.signalType,
+        request.deviceType,
+    )
+    return JSONResponse({"classification": classification})
+
+
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(
+        status_code=500,
+        content={"error": f"Processing failed: {exc}"},
+    )
 
 
 def decode_samples(raw_samples: Any) -> np.ndarray:
     if isinstance(raw_samples, str):
-        binary = base64.b64decode(raw_samples)
-        return np.frombuffer(binary, dtype=np.float32).astype(np.float32, copy=True)
+        try:
+            binary = base64.b64decode(raw_samples)
+            return np.frombuffer(binary, dtype=np.float32).astype(np.float32, copy=True)
+        except (TypeError, ValueError) as error:
+            raise ValueError("samples must be a base64 float32 buffer or an array of numbers.") from error
 
     if isinstance(raw_samples, list):
         return np.asarray(raw_samples, dtype=np.float32)
@@ -238,12 +263,7 @@ def downsample(samples: np.ndarray, points: int) -> list[float]:
     return [round(float(np.mean(group)), 5) for group in groups]
 
 
-def run(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None:
-    server = ThreadingHTTPServer((host, port), SignalRequestHandler)
-    print(f"Signal Processor website running at http://{host}:{port}")
-    print("Use Ctrl+C to stop the server.")
-    server.serve_forever()
-
-
 if __name__ == "__main__":
-    run()
+    import uvicorn
+
+    uvicorn.run("Digital.web_server:app", host=DEFAULT_HOST, port=DEFAULT_PORT, reload=False)

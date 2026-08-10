@@ -92,9 +92,21 @@ This side is not a direct port of the Python stack. It is a practical embedded i
 
 ### Server
 
-- Python standard-library `http.server`
-- JSON API endpoint at `/api/process`
+- FastAPI backend serving the browser UI and API
+- JSON API endpoints:
+  - `/api/process` for signal processing + classification
+  - `/api/classify` for standalone ML signal classification
 - Base64 float32 audio transport from browser to backend
+- Signal type hint support for `generic`, `speech`, `ecg`, and `other`
+
+### MLOps and testing
+
+- `requirements.txt` includes `pytest` for automated validation
+- `tests/test_api.py` validates `/api/health`, `/api/process`, and `/api/classify`
+- GitHub Actions workflow added at `.github/workflows/ci.yml`
+  - installs dependencies
+  - launches the FastAPI server
+  - runs API tests
 
 ### Hardware
 
@@ -158,8 +170,8 @@ The browser demo serves a local website from `Digital/web_server.py`. It capture
 From the repository root:
 
 ```powershell
-cd Digital
-python web_server.py
+pip install -r requirements.txt
+python Digital\web_server.py
 ```
 
 Open:
@@ -195,6 +207,7 @@ Example request shape:
 ```json
 {
   "sampleRate": 48000,
+  "signalType": "generic",
   "samples": "<base64 float32 audio buffer>",
   "settings": {
     "highpass": 80,
@@ -203,6 +216,24 @@ Example request shape:
   }
 }
 ```
+
+The classification API is:
+
+```text
+POST /api/classify
+```
+
+Example request shape:
+
+```json
+{
+  "sampleRate": 48000,
+  "signalType": "ecg",
+  "samples": "<base64 float32 audio buffer>"
+}
+```
+
+Both endpoints return a classification result with a label and confidence score.
 
 The endpoint returns the processed metrics, waveform points, spectrum bins, detected noise peaks, and applied filters.
 
