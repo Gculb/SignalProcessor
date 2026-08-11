@@ -9,6 +9,7 @@ from typing import Any
 
 import numpy as np
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
@@ -26,6 +27,13 @@ DEFAULT_PORT = 8000
 MAX_SAMPLES = 96_000
 
 app = FastAPI(title="Digital Signal Processor API")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://127.0.0.1:8001", "http://localhost:8001", "http://127.0.0.1:8000", "http://localhost:8000"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+)
 classifier = SignalClassifier()
 
 
@@ -150,6 +158,7 @@ def process_signal(samples: np.ndarray, sample_rate: int, settings: dict[str, An
 
     applied_filters: list[str] = []
     detected_noise: list[float] = []
+    noise_peak_details: list[dict[str, float]] = []
 
     try:
         if 0 < highpass < sample_rate / 2:
@@ -159,10 +168,12 @@ def process_signal(samples: np.ndarray, sample_rate: int, settings: dict[str, An
             processor.apply_lowpass(lowpass)
             applied_filters.append(f"lowpass {lowpass:g} Hz")
         if detect_noise:
-            detected_noise = processor.detect_noise_peaks(
+            noise_peak_details = processor.detect_noise_peaks(
                 min_freq=max(40, highpass),
                 max_freq=min(1000, lowpass),
+                return_details=True,
             )
+            detected_noise = [detail["frequency"] for detail in noise_peak_details]
             processor.apply_notch_series(detected_noise)
             if detected_noise:
                 applied_filters.append("adaptive notch")
@@ -173,6 +184,7 @@ def process_signal(samples: np.ndarray, sample_rate: int, settings: dict[str, An
 
     processed_metrics = compute_metrics(processed_signal, sample_rate)
     spectrum = compute_spectrum(processed_signal, sample_rate)
+    spectrogram = compute_spectrogram(processed_signal, sample_rate)
 
     return {
         "sampleRate": sample_rate,
@@ -180,10 +192,20 @@ def process_signal(samples: np.ndarray, sample_rate: int, settings: dict[str, An
         "durationSeconds": raw_signal.size / sample_rate,
         "filters": applied_filters,
         "noisePeaksHz": [round(float(peak), 2) for peak in detected_noise],
+        "noisePeakDetails": [
+            {
+                "frequency": round(float(detail["frequency"]), 2),
+                "ratio": detail["ratio"],
+                "persistence": detail["persistence"],
+                "bandwidthHz": detail["bandwidthHz"],
+            }
+            for detail in noise_peak_details
+        ],
         "raw": raw_metrics,
         "processed": processed_metrics,
         "waveform": downsample(processed_signal, 256),
         "spectrum": spectrum,
+        "spectrogram": spectrogram,
     }
 
 
@@ -253,6 +275,32 @@ def compute_spectrum(samples: np.ndarray, sample_rate: int, bins: int = 96) -> l
         }
         for freq_group, mag_group in zip(frequency_groups, magnitude_groups)
     ]
+
+
+def compute_spectrogram(samples: np.ndarray, sample_rate: int, frame_seconds: float = 0.08, hop_seconds: float = 0.04) -> list[list[float]]:
+    if samples.size < 2:
+        return []
+
+    frame_length = max(64, int(frame_seconds * sample_rate))
+    hop_length = max(1, int(hop_seconds * sample_rate))
+    if frame_length > samples.size:
+        frame_length = samples.size
+        hop_length = max(1, frame_length // 2)
+
+    window = np.hanning(frame_length)
+    frames = []
+    for start in range(0, samples.size - frame_length + 1, hop_length):
+        frame = samples[start:start + frame_length] * window
+        spectrum = np.abs(np.fft.rfft(frame))
+        frames.append(spectrum)
+
+    if not frames:
+        return []
+
+    spectrogram = np.stack(frames, axis=1)
+    spectrogram = spectrogram[: min(spectrogram.shape[0], 128), :]
+    spectrogram = spectrogram / np.max(spectrogram)
+    return spectrogram.tolist()
 
 
 def downsample(samples: np.ndarray, points: int) -> list[float]:

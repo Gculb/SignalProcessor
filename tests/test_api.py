@@ -38,6 +38,14 @@ def test_process_endpoint() -> None:
     assert result["sampleRate"] == 48000
     assert result["sampleCount"] == 4800
     assert isinstance(result["processed"], dict)
+    assert isinstance(result.get("noisePeakDetails", []), list)
+    for detail in result.get("noisePeakDetails", []):
+        assert "frequency" in detail
+        assert "ratio" in detail
+        assert "persistence" in detail
+        assert "bandwidthHz" in detail
+    assert isinstance(result.get("spectrogram", []), list)
+    assert all(isinstance(row, list) for row in result.get("spectrogram", []))
     assert "classification" in result
     assert result["classification"]["label"] in {"noise", "speech_like", "ecg_like"}
 

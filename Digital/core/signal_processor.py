@@ -73,49 +73,114 @@ class SignalProcessor:
         percentile=20,
         max_peaks=4,
         prominence_ratio=6.0,
+        return_details=False,
     ):
         analysis_signal = self._get_quiet_frames(percentile=percentile)
         if analysis_signal.size == 0:
-            return []
+            return [] if not return_details else []
 
-        freqs, psd = signal.welch(
+        frequencies, spectrogram = self._compute_spectrogram(
             analysis_signal,
-            fs=self.sample_rate,
-            nperseg=min(2048, len(analysis_signal)),
+            frame_seconds=0.08,
+            hop_seconds=0.04,
         )
 
-        mask = (freqs >= min_freq) & (freqs <= max_freq)
-        freqs = freqs[mask]
-        psd = psd[mask]
-        if psd.size < 3:
-            return []
+        mask = (frequencies >= min_freq) & (frequencies <= max_freq)
+        frequencies = frequencies[mask]
+        spectrogram = spectrogram[mask, :]
+        if frequencies.size < 3 or spectrogram.shape[1] == 0:
+            return [] if not return_details else []
 
-        peaks, _ = signal.find_peaks(psd)
-        if peaks.size == 0:
-            return []
+        average_power = np.mean(spectrogram, axis=1)
+        power_floor = np.percentile(average_power, 10)
+        power_floor = max(power_floor, 1e-12)
 
-        median_power = np.median(psd)
-        if median_power <= 0:
-            median_power = np.mean(psd[psd > 0]) if np.any(psd > 0) else 1.0
+        local_noise_floor = np.empty_like(average_power)
+        for index in range(average_power.size):
+            start = max(0, index - 3)
+            end = min(average_power.size, index + 4)
+            neighbors = np.concatenate((average_power[start:index], average_power[index + 1:end]))
+            local_noise_floor[index] = np.median(neighbors) if neighbors.size else average_power[index]
+        local_noise_floor = np.maximum(local_noise_floor, power_floor)
+
+        peak_indices, _ = signal.find_peaks(average_power)
+        if peak_indices.size == 0:
+            return [] if not return_details else []
+
+        candidate_indices = [
+            int(index)
+            for index in peak_indices
+            if average_power[index] >= local_noise_floor[index] * prominence_ratio
+        ]
+
+        if not candidate_indices:
+            return [] if not return_details else []
+
+        details = []
+        global_threshold = np.percentile(average_power, 50) * 1.5
+        for index in candidate_indices:
+            frame_threshold = max(local_noise_floor[index] * 1.5, global_threshold)
+            persistence = float(np.mean(spectrogram[index, :] >= frame_threshold))
+
+            left = index
+            while left > 0 and average_power[left] >= local_noise_floor[index] * 1.5:
+                left -= 1
+            right = index
+            while right + 1 < average_power.size and average_power[right] >= local_noise_floor[index] * 1.5:
+                right += 1
+
+            bandwidth = float(frequencies[right] - frequencies[left]) if right > left else float(frequencies[1] - frequencies[0])
+            details.append(
+                {
+                    "frequency": float(frequencies[index]),
+                    "ratio": round(float(average_power[index] / local_noise_floor[index]), 2),
+                    "persistence": round(persistence, 3),
+                    "bandwidthHz": round(bandwidth, 2),
+                }
+            )
 
         ranked = sorted(
-            (
-                (freqs[index], psd[index] / median_power)
-                for index in peaks
-                if psd[index] >= median_power * prominence_ratio
-            ),
-            key=lambda item: item[1],
+            details,
+            key=lambda item: (item["ratio"], item["persistence"]),
             reverse=True,
         )
 
         selected = []
-        for frequency, _ in ranked:
-            if all(abs(frequency - existing) > 20 for existing in selected):
-                selected.append(float(frequency))
+        selected_details = []
+        for detail in ranked:
+            if all(abs(detail["frequency"] - existing) > 20 for existing in selected):
+                selected.append(detail["frequency"])
+                selected_details.append(detail)
             if len(selected) >= max_peaks:
                 break
 
-        return selected
+        harmonic_peaks = self._filter_harmonic_noise_peaks(selected)
+        filtered_frequencies = harmonic_peaks if harmonic_peaks else selected
+
+        if return_details:
+            return [detail for detail in selected_details if detail["frequency"] in filtered_frequencies]
+
+        return filtered_frequencies
+
+    def _compute_spectrogram(self, samples, frame_seconds=0.08, hop_seconds=0.04):
+        frame_length = max(64, int(frame_seconds * self.sample_rate))
+        hop_length = max(1, int(hop_seconds * self.sample_rate))
+        if frame_length > samples.size:
+            frame_length = samples.size
+            hop_length = max(1, frame_length // 2)
+
+        window = np.hanning(frame_length)
+        frames = []
+        for start in range(0, samples.size - frame_length + 1, hop_length):
+            frame = samples[start : start + frame_length] * window
+            spectrum = np.abs(np.fft.rfft(frame)) ** 2
+            frames.append(spectrum)
+
+        if not frames:
+            return np.array([]), np.array([[]])
+
+        frequencies = np.fft.rfftfreq(frame_length, 1 / self.sample_rate)
+        return frequencies, np.stack(frames, axis=1)
 
     def apply_notch_series(self, notch_freqs, quality_factor=30):
         for notch_freq in notch_freqs:

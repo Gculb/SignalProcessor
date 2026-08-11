@@ -1,3 +1,15 @@
+const API_BASE_URL = (() => {
+  if (window.location.protocol === "file:") {
+    return "http://127.0.0.1:8000";
+  }
+
+  if (window.location.origin.includes(":8001")) {
+    return "http://127.0.0.1:8000";
+  }
+
+  return window.location.origin;
+})();
+
 const elements = {
   startButton: document.querySelector("#startButton"),
   stopButton: document.querySelector("#stopButton"),
@@ -13,8 +25,10 @@ const elements = {
   classifyButton: document.querySelector("#classifyButton"),
   resetButton: document.querySelector("#resetButton"),
   deviceTypeLabel: document.querySelector("#deviceTypeLabel"),
+  noiseDetailsLabel: document.querySelector("#noiseDetailsLabel"),
   rmsMetric: document.querySelector("#rmsMetric"),
   peakMetric: document.querySelector("#peakMetric"),
+  spectrogramCanvas: document.querySelector("#spectrogramCanvas"),
   dbfsMetric: document.querySelector("#dbfsMetric"),
   frequencyMetric: document.querySelector("#frequencyMetric"),
   zcrMetric: document.querySelector("#zcrMetric"),
@@ -124,7 +138,7 @@ async function sendAudioChunk(samples, sampleRate) {
   lastSendAt = performance.now();
 
   try {
-    const response = await fetch("/api/process", {
+    const response = await fetch(`${API_BASE_URL}/api/process`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -145,9 +159,9 @@ async function sendAudioChunk(samples, sampleRate) {
       }),
     });
 
-    const payload = await response.json();
+    const payload = await parseJsonResponse(response);
     if (!response.ok) {
-      throw new Error(payload.error || "Server rejected the audio chunk");
+      throw new Error(payload.error || `Server rejected the audio chunk (${response.status})`);
     }
 
     renderMetrics(payload, performance.now() - lastSendAt);
@@ -168,7 +182,7 @@ async function classifyCurrentChunk() {
   try {
     setStatus("Classifying current chunk…", false);
     setClassifierBadge("Working", "pill-neutral");
-    const response = await fetch("/api/classify", {
+    const response = await fetch(`${API_BASE_URL}/api/classify`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -184,9 +198,9 @@ async function classifyCurrentChunk() {
       }),
     });
 
-    const payload = await response.json();
+    const payload = await parseJsonResponse(response);
     if (!response.ok) {
-      throw new Error(payload.error || "Server rejected the classification request");
+      throw new Error(payload.error || `Server rejected the classification request (${response.status})`);
     }
 
     elements.classificationLabel.textContent = payload.classification
@@ -218,6 +232,7 @@ function resetInterface() {
   setClassifierBadge("Waiting", "pill-neutral");
   drawWaveform([]);
   drawSpectrum([]);
+  drawSpectrogram([]);
   setStatus("Ready", true);
 }
 
@@ -245,13 +260,21 @@ function renderMetrics(payload, latencyMs) {
   elements.noiseLabel.textContent = payload.noisePeaksHz.length
     ? payload.noisePeaksHz.map((frequency) => `${frequency} Hz`).join(", ")
     : "None";
+  elements.noiseDetailsLabel.textContent = payload.noisePeakDetails?.length
+    ? payload.noisePeakDetails
+        .map(
+          (detail) =>
+            `${detail.frequency}Hz (ratio ${detail.ratio}, persistence ${detail.persistence}, ${detail.bandwidthHz}Hz)`
+        )
+        .join("; ")
+    : "None";
+  drawWaveform(payload.waveform);
+  drawSpectrum(payload.spectrum);
+  drawSpectrogram(payload.spectrogram);
   elements.classificationLabel.textContent = payload.classification
     ? `${payload.classification.label} (${payload.classification.confidence})`
     : "Unknown";
   elements.deviceTypeLabel.textContent = payload.classification?.deviceTypeHint || elements.deviceTypeSelect.value || "Generic";
-
-  drawWaveform(payload.waveform);
-  drawSpectrum(payload.spectrum);
   setStatus("Connected", true);
 }
 
@@ -303,6 +326,42 @@ function drawSpectrum(bins) {
   });
 }
 
+function drawSpectrogram(matrix) {
+  const canvas = elements.spectrogramCanvas;
+  const context = canvas.getContext("2d");
+  const width = canvas.width;
+  const height = canvas.height;
+
+  context.clearRect(0, 0, width, height);
+  drawGrid(context, width, height);
+
+  if (!matrix?.length) {
+    context.fillStyle = "rgba(255, 255, 255, 0.04)";
+    context.fillRect(0, 0, width, height);
+    return;
+  }
+
+  const rows = matrix.length;
+  const cols = matrix[0].length;
+  const cellWidth = width / cols;
+  const cellHeight = height / rows;
+
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      const value = Math.min(Math.max(matrix[row][col], 0), 1);
+      const intensity = Math.round(value * 255);
+      const color = `rgb(${intensity}, ${Math.round(180 + value * 55)}, ${255 - intensity})`;
+      context.fillStyle = color;
+      context.fillRect(
+        col * cellWidth,
+        height - (row + 1) * cellHeight,
+        Math.max(1, cellWidth),
+        Math.max(1, cellHeight)
+      );
+    }
+  }
+}
+
 function drawGrid(context, width, height) {
   context.fillStyle = "#1f282b";
   context.fillRect(0, 0, width, height);
@@ -327,6 +386,15 @@ function drawGrid(context, width, height) {
 function setStatus(message, connected) {
   elements.status.classList.toggle("connected", connected);
   elements.statusText.textContent = message;
+}
+
+async function parseJsonResponse(response) {
+  const text = await response.text();
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch (error) {
+    throw new Error(`Invalid JSON response from server: ${text.slice(0, 200)}`);
+  }
 }
 
 function float32ToBase64(float32Array) {
