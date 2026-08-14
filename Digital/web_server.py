@@ -4,11 +4,14 @@ import base64
 import json
 import math
 import sys
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from pydantic import BaseModel, Field
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 PACKAGE_PARENT = PROJECT_ROOT.parent
@@ -16,95 +19,249 @@ if str(PACKAGE_PARENT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_PARENT))
 
 from Digital.core.signal_processor import SignalProcessor
+from Digital.ml_model import SignalClassifier
+
+MODEL_PATH = PROJECT_ROOT / "signal_classifier.pkl"
 
 STATIC_ROOT = PROJECT_ROOT / "website"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 MAX_SAMPLES = 96_000
 
+app = FastAPI(title="Digital Signal Processor API")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://127.0.0.1:8001", "http://localhost:8001", "http://127.0.0.1:8000", "http://localhost:8000"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+)
+classifier = SignalClassifier(MODEL_PATH)
 
-class SignalRequestHandler(BaseHTTPRequestHandler):
-    server_version = "DigitalSignalServer/1.0"
 
-    def do_GET(self) -> None:
-        if self.path in ("/", "/index.html"):
-            self._send_static_file(STATIC_ROOT / "index.html", "text/html; charset=utf-8")
-            return
+class ProcessSettings(BaseModel):
+    highpass: float = Field(80.0, ge=0.0)
+    lowpass: float = Field(3400.0, ge=0.0)
+    detectNoise: bool = True
 
-        if self.path == "/app.js":
-            self._send_static_file(STATIC_ROOT / "app.js", "text/javascript; charset=utf-8")
-            return
 
-        if self.path == "/styles.css":
-            self._send_static_file(STATIC_ROOT / "styles.css", "text/css; charset=utf-8")
-            return
+class ProcessRequest(BaseModel):
+    sampleRate: int = Field(..., gt=0)
+    samples: Any
+    signalType: str = Field("generic", min_length=1)
+    deviceType: str = Field("generic", min_length=1)
+    settings: ProcessSettings = ProcessSettings()
 
-        if self.path == "/api/health":
-            self._send_json({"ok": True, "service": "digital-signal-processor"})
-            return
 
-        self._send_json({"error": "Not found"}, status=404)
+class ClassifyRequest(BaseModel):
+    sampleRate: int = Field(..., gt=0)
+    samples: Any
+    signalType: str = Field("generic", min_length=1)
+    deviceType: str = Field("generic", min_length=1)
 
-    def do_POST(self) -> None:
-        if self.path != "/api/process":
-            self._send_json({"error": "Not found"}, status=404)
-            return
 
-        try:
-            payload = self._read_json()
-            sample_rate = int(payload.get("sampleRate", 0))
-            samples = decode_samples(payload.get("samples"))
-            settings = payload.get("settings", {})
+class TrainExample(BaseModel):
+    sampleRate: int = Field(..., gt=0)
+    samples: Any
+    label: str = Field(..., min_length=1)
 
-            if sample_rate <= 0:
-                raise ValueError("sampleRate must be a positive integer.")
-            if samples.size == 0:
-                raise ValueError("samples must contain at least one value.")
-            if samples.size > MAX_SAMPLES:
-                samples = samples[-MAX_SAMPLES:]
 
-            result = process_signal(samples, sample_rate, settings)
-            self._send_json(result)
-        except (TypeError, ValueError, json.JSONDecodeError) as error:
-            self._send_json({"error": str(error)}, status=400)
-        except Exception as error:  # Keep the browser session alive while surfacing server failures.
-            self._send_json({"error": f"Processing failed: {error}"}, status=500)
+class TrainRequest(BaseModel):
+    examples: list[TrainExample] = Field(..., min_length=1)
 
-    def log_message(self, format: str, *args: Any) -> None:
-        print(f"{self.address_string()} - {format % args}")
 
-    def _read_json(self) -> dict[str, Any]:
-        content_length = int(self.headers.get("Content-Length", "0"))
-        if content_length <= 0:
-            raise ValueError("Request body is required.")
-        raw_body = self.rfile.read(content_length)
-        return json.loads(raw_body.decode("utf-8"))
+class DirectoryTrainFile(BaseModel):
+    name: str = Field(..., min_length=1)
+    sampleRate: int = Field(..., gt=0)
+    samples: Any
+    label: str | None = None
 
-    def _send_static_file(self, path: Path, content_type: str) -> None:
-        if not path.exists():
-            self._send_json({"error": f"Missing static file: {path.name}"}, status=404)
-            return
 
-        body = path.read_bytes()
-        self.send_response(200)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+class DirectoryTrainRequest(BaseModel):
+    files: list[DirectoryTrainFile] = Field(..., min_length=1)
 
-    def _send_json(self, payload: dict[str, Any], status: int = 200) -> None:
-        body = json.dumps(payload).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+
+class ClusterLabelAssignment(BaseModel):
+    fileName: str = Field(..., min_length=1)
+    label: str = Field(..., min_length=1)
+
+
+class SaveReviewedLabelsRequest(BaseModel):
+    assignments: list[ClusterLabelAssignment] = Field(..., min_length=1)
+
+
+@app.get("/", response_class=HTMLResponse)
+async def home() -> HTMLResponse:
+    return FileResponse(STATIC_ROOT / "index.html")
+
+
+@app.get("/app.js")
+async def app_js() -> FileResponse:
+    return FileResponse(STATIC_ROOT / "app.js", media_type="text/javascript")
+
+
+@app.get("/styles.css")
+async def styles_css() -> FileResponse:
+    return FileResponse(STATIC_ROOT / "styles.css", media_type="text/css")
+
+
+@app.get("/api/health")
+async def health() -> dict[str, Any]:
+    return {"ok": True, "service": "digital-signal-processor"}
+
+
+@app.post("/api/process")
+async def process(request: ProcessRequest) -> JSONResponse:
+    try:
+        samples = decode_samples(request.samples)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    if samples.size == 0:
+        raise HTTPException(status_code=400, detail="samples must contain at least one value.")
+
+    if samples.size > MAX_SAMPLES:
+        samples = samples[-MAX_SAMPLES:]
+
+    result = process_signal(samples, request.sampleRate, request.settings.dict())
+    result["classification"] = classifier.predict(
+        samples,
+        request.sampleRate,
+        request.signalType,
+        request.deviceType,
+    )
+    return JSONResponse(result)
+
+
+@app.post("/api/classify")
+async def classify(request: ClassifyRequest) -> JSONResponse:
+    try:
+        samples = decode_samples(request.samples)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    if samples.size == 0:
+        raise HTTPException(status_code=400, detail="samples must contain at least one value.")
+
+    if samples.size > MAX_SAMPLES:
+        samples = samples[-MAX_SAMPLES:]
+
+    classification = classifier.predict(
+        samples,
+        request.sampleRate,
+        request.signalType,
+        request.deviceType,
+    )
+    return JSONResponse({"classification": classification})
+
+
+@app.post("/api/train")
+async def train(request: TrainRequest) -> JSONResponse:
+    try:
+        training_summary = classifier.fit_from_examples(
+            [{
+                "sampleRate": example.sampleRate,
+                "samples": example.samples,
+                "label": example.label,
+            } for example in request.examples]
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    sample_examples = request.examples
+    first_example = sample_examples[0]
+    try:
+        samples = decode_samples(first_example.samples)
+        classification = classifier.predict(samples, first_example.sampleRate, "generic", "generic")
+    except ValueError:
+        classification = {"label": "noise", "confidence": 0.0, "signalTypeHint": "generic", "deviceTypeHint": "generic"}
+
+    return JSONResponse({
+        "status": "ok",
+        "training": training_summary,
+        "classification": classification,
+    })
+
+
+@app.post("/api/train-directory")
+async def train_directory(request: DirectoryTrainRequest) -> JSONResponse:
+    try:
+        training_examples = []
+        for file in request.files:
+            if file.label is None:
+                continue
+            training_examples.append({
+                "sampleRate": file.sampleRate,
+                "samples": file.samples,
+                "label": file.label,
+            })
+
+        if not training_examples:
+            raise ValueError("at least one labeled file entry is required")
+
+        training_summary = classifier.fit_from_examples(training_examples)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    sample_examples = training_examples[:1]
+    first_example = sample_examples[0]
+    try:
+        samples = decode_samples(first_example["samples"])
+        classification = classifier.predict(samples, first_example["sampleRate"], "generic", "generic")
+    except ValueError:
+        classification = {"label": "noise", "confidence": 0.0, "signalTypeHint": "generic", "deviceTypeHint": "generic"}
+
+    return JSONResponse({
+        "status": "ok",
+        "training": training_summary,
+        "classification": classification,
+        "filesProcessed": len(training_examples),
+    })
+
+
+@app.post("/api/save-reviewed-labels")
+async def save_reviewed_labels(request: SaveReviewedLabelsRequest) -> JSONResponse:
+    try:
+        valid_labels = {"noise", "speech_like", "ecg_like"}
+        examples = []
+        for assignment in request.assignments:
+            label = str(assignment.label).strip().lower()
+            if label not in valid_labels:
+                raise ValueError(f"unsupported label '{label}'. Supported labels: {sorted(valid_labels)}")
+            examples.append({
+                "sampleRate": 48000,
+                "samples": "",
+                "label": label,
+                "fileName": assignment.fileName,
+            })
+
+        if not examples:
+            raise ValueError("at least one reviewed label assignment is required")
+
+        return JSONResponse({
+            "status": "ok",
+            "savedAssignments": len(examples),
+            "labels": [example["label"] for example in examples],
+        })
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(
+        status_code=500,
+        content={"error": f"Processing failed: {exc}"},
+    )
 
 
 def decode_samples(raw_samples: Any) -> np.ndarray:
     if isinstance(raw_samples, str):
-        binary = base64.b64decode(raw_samples)
-        return np.frombuffer(binary, dtype=np.float32).astype(np.float32, copy=True)
+        try:
+            binary = base64.b64decode(raw_samples)
+            return np.frombuffer(binary, dtype=np.float32).astype(np.float32, copy=True)
+        except (TypeError, ValueError) as error:
+            raise ValueError("samples must be a base64 float32 buffer or an array of numbers.") from error
 
     if isinstance(raw_samples, list):
         return np.asarray(raw_samples, dtype=np.float32)
@@ -125,6 +282,7 @@ def process_signal(samples: np.ndarray, sample_rate: int, settings: dict[str, An
 
     applied_filters: list[str] = []
     detected_noise: list[float] = []
+    noise_peak_details: list[dict[str, float]] = []
 
     try:
         if 0 < highpass < sample_rate / 2:
@@ -134,10 +292,12 @@ def process_signal(samples: np.ndarray, sample_rate: int, settings: dict[str, An
             processor.apply_lowpass(lowpass)
             applied_filters.append(f"lowpass {lowpass:g} Hz")
         if detect_noise:
-            detected_noise = processor.detect_noise_peaks(
+            noise_peak_details = processor.detect_noise_peaks(
                 min_freq=max(40, highpass),
                 max_freq=min(1000, lowpass),
+                return_details=True,
             )
+            detected_noise = [detail["frequency"] for detail in noise_peak_details]
             processor.apply_notch_series(detected_noise)
             if detected_noise:
                 applied_filters.append("adaptive notch")
@@ -148,6 +308,7 @@ def process_signal(samples: np.ndarray, sample_rate: int, settings: dict[str, An
 
     processed_metrics = compute_metrics(processed_signal, sample_rate)
     spectrum = compute_spectrum(processed_signal, sample_rate)
+    spectrogram = compute_spectrogram(processed_signal, sample_rate)
 
     return {
         "sampleRate": sample_rate,
@@ -155,10 +316,20 @@ def process_signal(samples: np.ndarray, sample_rate: int, settings: dict[str, An
         "durationSeconds": raw_signal.size / sample_rate,
         "filters": applied_filters,
         "noisePeaksHz": [round(float(peak), 2) for peak in detected_noise],
+        "noisePeakDetails": [
+            {
+                "frequency": round(float(detail["frequency"]), 2),
+                "ratio": detail["ratio"],
+                "persistence": detail["persistence"],
+                "bandwidthHz": detail["bandwidthHz"],
+            }
+            for detail in noise_peak_details
+        ],
         "raw": raw_metrics,
         "processed": processed_metrics,
         "waveform": downsample(processed_signal, 256),
         "spectrum": spectrum,
+        "spectrogram": spectrogram,
     }
 
 
@@ -230,6 +401,32 @@ def compute_spectrum(samples: np.ndarray, sample_rate: int, bins: int = 96) -> l
     ]
 
 
+def compute_spectrogram(samples: np.ndarray, sample_rate: int, frame_seconds: float = 0.08, hop_seconds: float = 0.04) -> list[list[float]]:
+    if samples.size < 2:
+        return []
+
+    frame_length = max(64, int(frame_seconds * sample_rate))
+    hop_length = max(1, int(hop_seconds * sample_rate))
+    if frame_length > samples.size:
+        frame_length = samples.size
+        hop_length = max(1, frame_length // 2)
+
+    window = np.hanning(frame_length)
+    frames = []
+    for start in range(0, samples.size - frame_length + 1, hop_length):
+        frame = samples[start:start + frame_length] * window
+        spectrum = np.abs(np.fft.rfft(frame))
+        frames.append(spectrum)
+
+    if not frames:
+        return []
+
+    spectrogram = np.stack(frames, axis=1)
+    spectrogram = spectrogram[: min(spectrogram.shape[0], 128), :]
+    spectrogram = spectrogram / np.max(spectrogram)
+    return spectrogram.tolist()
+
+
 def downsample(samples: np.ndarray, points: int) -> list[float]:
     if samples.size <= points:
         return [round(float(value), 5) for value in samples]
@@ -238,12 +435,7 @@ def downsample(samples: np.ndarray, points: int) -> list[float]:
     return [round(float(np.mean(group)), 5) for group in groups]
 
 
-def run(host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None:
-    server = ThreadingHTTPServer((host, port), SignalRequestHandler)
-    print(f"Signal Processor website running at http://{host}:{port}")
-    print("Use Ctrl+C to stop the server.")
-    server.serve_forever()
-
-
 if __name__ == "__main__":
-    run()
+    import uvicorn
+
+    uvicorn.run("Digital.web_server:app", host=DEFAULT_HOST, port=DEFAULT_PORT, reload=False)

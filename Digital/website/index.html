@@ -23,6 +23,8 @@
         <section class="controls">
           <button class="primary" id="startButton" type="button">Start microphone</button>
           <button id="stopButton" type="button" disabled>Stop</button>
+          <button id="classifyButton" type="button">Classify sample</button>
+          <button id="resetButton" type="button">Reset view</button>
           <label>
             <span>Highpass</span>
             <input id="highpassInput" type="number" min="1" max="2000" value="80">
@@ -35,6 +37,107 @@
             <input id="noiseToggle" type="checkbox" checked>
             <span>Noise detection</span>
           </label>
+          <label>
+            <span>Signal type</span>
+            <select id="signalTypeSelect" title="Choose the type of signal input">
+              <option value="generic">Generic</option>
+              <option value="speech">Speech</option>
+              <option value="ecg">ECG</option>
+              <option value="other">Other</option>
+            </select>
+          </label>
+          <label>
+            <span>Device type</span>
+            <select id="deviceTypeSelect" title="Choose the source device for this signal">
+              <option value="generic">Generic</option>
+              <option value="microphone">Microphone</option>
+              <option value="ecg_sensor">ECG sensor</option>
+              <option value="accelerometer">Accelerometer</option>
+              <option value="other">Other</option>
+            </select>
+          </label>
+          <label id="deviceCustomWrapper" style="display: none;">
+            <span>Custom device</span>
+            <input id="deviceCustomInput" type="text" placeholder="Enter device name" />
+          </label>
+        </section>
+
+        <section class="help-panel">
+          <div>
+            <h2>Device mapping help</h2>
+            <p>Select the device type that best matches the source of your signal. This helps the classifier understand your data context.</p>
+            <ul>
+              <li><strong>Generic</strong> — unknown or mixed sources.</li>
+              <li><strong>Microphone</strong> — speech and audio recordings.</li>
+              <li><strong>ECG sensor</strong> — heart-rate/biosignal inputs.</li>
+              <li><strong>Accelerometer</strong> — motion, vibration, or impact data.</li>
+              <li><strong>Other</strong> — any custom or experimental device.</li>
+            </ul>
+          </div>
+        </section>
+
+        <section class="training-panel panel">
+          <div class="panel-header">
+            <h2>Train with real labeled examples</h2>
+            <span>Small dataset workflow</span>
+          </div>
+          <div class="training-form">
+            <label>
+              <span>Label</span>
+              <select id="trainingLabelSelect">
+                <option value="noise">noise</option>
+                <option value="speech_like">speech_like</option>
+                <option value="ecg_like">ecg_like</option>
+              </select>
+            </label>
+            <label>
+              <span>Sample rate (Hz)</span>
+              <input id="trainingSampleRateInput" type="number" min="1000" max="96000" value="48000" />
+            </label>
+            <label class="full-width">
+              <span>Numeric samples or CSV values</span>
+              <textarea id="trainingSamplesInput" rows="4" placeholder="Paste numbers like: 0.02, 0.05, -0.01, 0.07"></textarea>
+            </label>
+            <label class="full-width">
+              <span>CSV batch rows (label,sampleRate,samples)</span>
+              <textarea id="trainingBatchInput" rows="4" placeholder="speech_like,48000,0.01,0.02,-0.03&#10;ecg_like,48000,0.2,0.8,-0.5&#10;noise,48000,0.04,0.02,-0.03"></textarea>
+            </label>
+            <label class="full-width">
+              <span>Upload .csv or .wav</span>
+              <input id="trainingFileInput" type="file" accept=".csv,.wav,.txt" />
+            </label>
+            <div class="training-actions">
+              <button class="primary" id="addTrainingExampleButton" type="button">Add example</button>
+              <button id="addTrainingBatchButton" type="button">Add batch rows</button>
+              <button id="generateDemoExamplesButton" type="button">Generate demo WAVs</button>
+              <button id="trainModelButton" type="button">Train model</button>
+            </div>
+          </div>
+          <div class="training-summary" id="trainingSummary">
+            No labeled samples added yet. Add one example or upload a CSV/WAV file to begin retraining.
+          </div>
+        </section>
+
+        <section class="training-panel panel">
+          <div class="panel-header">
+            <h2>Unlabeled WAV folder review</h2>
+            <span>Cluster then label</span>
+          </div>
+          <div class="training-form">
+            <label class="full-width">
+              <span>Upload unlabeled .wav files</span>
+              <input id="unlabeledWavInput" type="file" accept=".wav" multiple />
+            </label>
+            <div class="training-actions">
+              <button id="analyzeUnlabeledButton" type="button">Analyze folder</button>
+              <button id="applyClusterLabelsButton" type="button">Apply reviewed cluster labels</button>
+              <button id="saveReviewedLabelsButton" type="button">Save reviewed labels</button>
+            </div>
+          </div>
+          <div id="clusterSummary" class="training-summary">
+            Upload a folder of unlabeled WAV files to discover signal groups and assign labels before retraining.
+          </div>
+          <div id="clusterReviewList" class="cluster-review-list"></div>
         </section>
 
         <section class="meters" aria-label="Signal metrics">
@@ -79,6 +182,13 @@
             </div>
             <canvas id="spectrumCanvas" width="900" height="260"></canvas>
           </div>
+          <div class="panel">
+            <div class="panel-header">
+              <h2>Spectrogram</h2>
+              <span>Time vs frequency intensity</span>
+            </div>
+            <canvas id="spectrogramCanvas" width="900" height="260"></canvas>
+          </div>
         </section>
 
         <section class="details">
@@ -89,6 +199,22 @@
           <div>
             <span>Detected noise peaks</span>
             <p id="noiseLabel">None</p>
+          </div>
+          <div>
+            <span>Noise peak details</span>
+            <p id="noiseDetailsLabel">None</p>
+          </div>
+          <div>
+            <span>Device match</span>
+            <p id="deviceTypeLabel">Generic</p>
+          </div>
+          <div>
+            <span>Signal classification</span>
+            <p id="classificationLabel">Unknown</p>
+          </div>
+          <div>
+            <span>Classifier status</span>
+            <p><span id="classificationStatus" class="pill pill-neutral">Waiting</span></p>
           </div>
         </section>
       </section>

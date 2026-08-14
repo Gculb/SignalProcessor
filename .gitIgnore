@@ -1,1 +1,4 @@
 __pycache__/ 
+.github/
+.pytest_cache/
+Digital/signal_classifier.pkl 
