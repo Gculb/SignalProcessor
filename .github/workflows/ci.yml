@@ -22,6 +22,6 @@ jobs:
           pip install -r requirements.txt
       - name: Run API tests
         run: |
-          python -m uvicorn Digital.web_server:app --host 127.0.0.1 --port 8000 --log-level warning &
-          sleep 5
-          pytest -q tests/test_api.py
+          Start-Process python -ArgumentList '-m','uvicorn','Digital.web_server:app','--host','127.0.0.1','--port','8000','--log-level','warning' -NoNewWindow
+          Start-Sleep -Seconds 5
+          python -m pytest tests/test_api.py -q
