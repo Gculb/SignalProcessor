@@ -61,3 +61,41 @@ def test_classify_endpoint() -> None:
 
     assert "classification" in result
     assert result["classification"]["label"] in {"noise", "speech_like", "ecg_like"}
+
+
+def test_train_endpoint() -> None:
+    speech = np.sin(2 * np.pi * 440 * np.linspace(0, 0.25, 12000, endpoint=False))
+    ecg = np.zeros(12000, dtype=np.float32)
+    for i in range(0, 12000, 240):
+        ecg[i : i + 80] = np.linspace(0.0, 1.0, 80, endpoint=False)
+    noise = np.random.default_rng(7).normal(0.0, 0.3, 12000).astype(np.float32)
+
+    payload = {
+        "examples": [
+            {"sampleRate": 48000, "samples": _encode_samples(speech), "label": "speech_like"},
+            {"sampleRate": 48000, "samples": _encode_samples(ecg), "label": "ecg_like"},
+            {"sampleRate": 48000, "samples": _encode_samples(noise), "label": "noise"},
+        ]
+    }
+    result = _post_json("http://127.0.0.1:8000/api/train", payload)
+
+    assert result["status"] == "ok"
+    assert result["training"]["trainedExamples"] == 3
+    assert result["classification"]["label"] in {"noise", "speech_like", "ecg_like"}
+
+
+def test_train_directory_endpoint() -> None:
+    speech = np.sin(2 * np.pi * 440 * np.linspace(0, 0.20, 9600, endpoint=False))
+    noise = np.random.default_rng(9).normal(0.0, 0.2, 9600).astype(np.float32)
+
+    payload = {
+        "files": [
+            {"name": "speech_1.wav", "sampleRate": 48000, "samples": _encode_samples(speech), "label": "speech_like"},
+            {"name": "noise_1.wav", "sampleRate": 48000, "samples": _encode_samples(noise), "label": "noise"},
+        ]
+    }
+    result = _post_json("http://127.0.0.1:8000/api/train-directory", payload)
+
+    assert result["status"] == "ok"
+    assert result["training"]["trainedExamples"] == 2
+    assert result["filesProcessed"] == 2

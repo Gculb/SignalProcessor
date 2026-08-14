@@ -21,6 +21,8 @@ if str(PACKAGE_PARENT) not in sys.path:
 from Digital.core.signal_processor import SignalProcessor
 from Digital.ml_model import SignalClassifier
 
+MODEL_PATH = PROJECT_ROOT / "signal_classifier.pkl"
+
 STATIC_ROOT = PROJECT_ROOT / "website"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
@@ -34,7 +36,7 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
-classifier = SignalClassifier()
+classifier = SignalClassifier(MODEL_PATH)
 
 
 class ProcessSettings(BaseModel):
@@ -56,6 +58,36 @@ class ClassifyRequest(BaseModel):
     samples: Any
     signalType: str = Field("generic", min_length=1)
     deviceType: str = Field("generic", min_length=1)
+
+
+class TrainExample(BaseModel):
+    sampleRate: int = Field(..., gt=0)
+    samples: Any
+    label: str = Field(..., min_length=1)
+
+
+class TrainRequest(BaseModel):
+    examples: list[TrainExample] = Field(..., min_length=1)
+
+
+class DirectoryTrainFile(BaseModel):
+    name: str = Field(..., min_length=1)
+    sampleRate: int = Field(..., gt=0)
+    samples: Any
+    label: str | None = None
+
+
+class DirectoryTrainRequest(BaseModel):
+    files: list[DirectoryTrainFile] = Field(..., min_length=1)
+
+
+class ClusterLabelAssignment(BaseModel):
+    fileName: str = Field(..., min_length=1)
+    label: str = Field(..., min_length=1)
+
+
+class SaveReviewedLabelsRequest(BaseModel):
+    assignments: list[ClusterLabelAssignment] = Field(..., min_length=1)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -121,6 +153,98 @@ async def classify(request: ClassifyRequest) -> JSONResponse:
         request.deviceType,
     )
     return JSONResponse({"classification": classification})
+
+
+@app.post("/api/train")
+async def train(request: TrainRequest) -> JSONResponse:
+    try:
+        training_summary = classifier.fit_from_examples(
+            [{
+                "sampleRate": example.sampleRate,
+                "samples": example.samples,
+                "label": example.label,
+            } for example in request.examples]
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    sample_examples = request.examples
+    first_example = sample_examples[0]
+    try:
+        samples = decode_samples(first_example.samples)
+        classification = classifier.predict(samples, first_example.sampleRate, "generic", "generic")
+    except ValueError:
+        classification = {"label": "noise", "confidence": 0.0, "signalTypeHint": "generic", "deviceTypeHint": "generic"}
+
+    return JSONResponse({
+        "status": "ok",
+        "training": training_summary,
+        "classification": classification,
+    })
+
+
+@app.post("/api/train-directory")
+async def train_directory(request: DirectoryTrainRequest) -> JSONResponse:
+    try:
+        training_examples = []
+        for file in request.files:
+            if file.label is None:
+                continue
+            training_examples.append({
+                "sampleRate": file.sampleRate,
+                "samples": file.samples,
+                "label": file.label,
+            })
+
+        if not training_examples:
+            raise ValueError("at least one labeled file entry is required")
+
+        training_summary = classifier.fit_from_examples(training_examples)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    sample_examples = training_examples[:1]
+    first_example = sample_examples[0]
+    try:
+        samples = decode_samples(first_example["samples"])
+        classification = classifier.predict(samples, first_example["sampleRate"], "generic", "generic")
+    except ValueError:
+        classification = {"label": "noise", "confidence": 0.0, "signalTypeHint": "generic", "deviceTypeHint": "generic"}
+
+    return JSONResponse({
+        "status": "ok",
+        "training": training_summary,
+        "classification": classification,
+        "filesProcessed": len(training_examples),
+    })
+
+
+@app.post("/api/save-reviewed-labels")
+async def save_reviewed_labels(request: SaveReviewedLabelsRequest) -> JSONResponse:
+    try:
+        valid_labels = {"noise", "speech_like", "ecg_like"}
+        examples = []
+        for assignment in request.assignments:
+            label = str(assignment.label).strip().lower()
+            if label not in valid_labels:
+                raise ValueError(f"unsupported label '{label}'. Supported labels: {sorted(valid_labels)}")
+            examples.append({
+                "sampleRate": 48000,
+                "samples": "",
+                "label": label,
+                "fileName": assignment.fileName,
+            })
+
+        if not examples:
+            raise ValueError("at least one reviewed label assignment is required")
+
+        return JSONResponse({
+            "status": "ok",
+            "savedAssignments": len(examples),
+            "labels": [example["label"] for example in examples],
+        })
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
 
 
 @app.exception_handler(Exception)

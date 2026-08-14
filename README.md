@@ -16,6 +16,8 @@ The goal is to prototype the DSP pipeline in software first, learn what kinds of
 - A Python DSP pipeline for inspecting, filtering, and cleaning WAV signals
 - A live client/server website that captures microphone audio in the browser and sends chunks to Python for processing
 - Real-time metrics including RMS, peak amplitude, dBFS, dominant frequency, zero-crossing rate, detected noise peaks, waveform, and spectrum
+- A lightweight supervised classifier for noise, speech-like, and ECG-like signal labels
+- A low-data training workflow that accepts labeled examples or reviewed unlabeled WAV batches without blindly training on unlabeled data
 - An Arduino-compatible signal processor that applies embedded-friendly filtering and noise suppression
 - Benchmarks for both WAV denoising quality and embedded per-sample timing
 
@@ -59,7 +61,9 @@ This side is not a direct port of the Python stack. It is a practical embedded i
 - WAV loading and saving
 - sample pipelines for inspecting and cleaning recorded files
 - live browser microphone capture through the Web Audio API
-- Python HTTP endpoint for processing microphone chunks
+- Python HTTP endpoints for processing, classification, and retraining
+- ML classifier with saved model state in `Digital/signal_classifier.pkl`
+- browser-based labeling and review flow for unlabeled WAV clusters
 - dashboard metrics and canvas-based waveform/spectrum visualization
 
 ### Hardware Capabilities
@@ -94,15 +98,20 @@ This side is not a direct port of the Python stack. It is a practical embedded i
 
 - FastAPI backend serving the browser UI and API
 - JSON API endpoints:
-  - `/api/process` for signal processing + classification
+  - `/api/health` for service status
+  - `/api/process` for DSP processing + classification
   - `/api/classify` for standalone ML signal classification
+  - `/api/train` for labeled example retraining
+  - `/api/train-directory` for labeled WAV/file batches
+  - `/api/save-reviewed-labels` for reviewed unlabeled cluster assignments
 - Base64 float32 audio transport from browser to backend
 - Signal type hint support for `generic`, `speech`, `ecg`, and `other`
+- Model persistence to `Digital/signal_classifier.pkl` after training
 
 ### MLOps and testing
 
 - `requirements.txt` includes `pytest` for automated validation
-- `tests/test_api.py` validates `/api/health`, `/api/process`, and `/api/classify`
+- `tests/test_api.py` validates `/api/health`, `/api/process`, `/api/classify`, `/api/train`, and `/api/train-directory`
 - GitHub Actions workflow added at `.github/workflows/ci.yml`
   - installs dependencies
   - launches the FastAPI server
@@ -137,6 +146,8 @@ SignalProcessor/
 |   |   +-- index.html
 |   |   +-- app.js
 |   |   +-- styles.css
+|   +-- ml_model.py
+|   +-- signal_classifier.pkl
 |   +-- sample_files/
 |   +-- processed_files/
 |   +-- web_server.py
@@ -148,31 +159,36 @@ SignalProcessor/
 |   +-- SignalProcessor.cpp
 |   +-- README.md
 |
++-- tests/
+|   +-- test_api.py
+|
 +-- README.md
+|   +-- requirements.txt
 ```
 
 ## How The Pieces Work Together
 
-The intended workflow is:
+The current workflow is:
 
 1. Use `Digital` to inspect sample files and identify what noise is actually present.
 2. Tune filtering and denoising behavior in Python where iteration is faster.
-3. Use the browser endpoint to test live microphone signals against the Python pipeline.
-4. Recreate the useful parts of that pipeline in `Hardware` using embedded-friendly code.
-5. Deploy the hardware version to a board for live signal cleanup.
+3. Use the browser app or API to process microphone or WAV samples and ask for classification.
+4. Add labeled examples to retrain the model with real data when you have enough examples.
+5. For smaller or unlabeled datasets, review cluster outputs and save reviewed labels before retraining.
+6. Recreate the useful parts of the pipeline in `Hardware` using embedded-friendly code.
+7. Deploy the hardware version to a board for live signal cleanup.
 
 ## Live Website Demo
 
-The browser demo serves a local website from `Digital/web_server.py`. It captures microphone audio, sends short audio chunks to Python, processes the signal, and updates metrics in the page.
+The browser demo runs through the FastAPI app in `Digital/web_server.py` and serves the UI from the repo root.
 
 ![Signal Processor live microphone demo](gifs/demo.gif)
 
-OLD UI/INTERFACE
-From the repository root:
+Start the server from the repository root with:
 
 ```powershell
 pip install -r requirements.txt
-python Digital\web_server.py
+python -m uvicorn Digital.web_server:app --host 127.0.0.1 --port 8000
 ```
 
 Open:
@@ -181,29 +197,28 @@ Open:
 http://127.0.0.1:8000
 ```
 
-The website shows:
+The current browser UI supports:
 
-- microphone connection status
-- high-pass and low-pass filter controls
-- optional adaptive noise detection
-- RMS
-- peak amplitude
-- dBFS
-- dominant frequency
-- zero-crossing rate
-- request latency
-- processed waveform
-- processed frequency spectrum
-- detected noise peaks
-- filters applied by the server
+- microphone capture and signal processing
+- WAV upload and batch example loading
+- signal classification
+- training examples with labels
+- directory-style training for labeled WAV batches
+- unlabeled folder analysis with cluster review
+- saving reviewed cluster labels before retraining
 
-The processing API is:
+The core API endpoints are:
 
 ```text
+GET /api/health
 POST /api/process
+POST /api/classify
+POST /api/train
+POST /api/train-directory
+POST /api/save-reviewed-labels
 ```
 
-Example request shape:
+Example request shape for processing:
 
 ```json
 {
@@ -218,25 +233,18 @@ Example request shape:
 }
 ```
 
-The classification API is:
-
-```text
-POST /api/classify
-```
-
-Example request shape:
+Example request shape for training:
 
 ```json
 {
-  "sampleRate": 48000,
-  "signalType": "ecg",
-  "samples": "<base64 float32 audio buffer>"
+  "examples": [
+    {"sampleRate": 48000, "samples": "<base64 float32 audio buffer>", "label": "speech_like"},
+    {"sampleRate": 48000, "samples": "<base64 float32 audio buffer>", "label": "noise"}
+  ]
 }
 ```
 
-Both endpoints return a classification result with a label and confidence score.
-
-The endpoint returns the processed metrics, waveform points, spectrum bins, detected noise peaks, and applied filters.
+The endpoints return processed metrics, classification results, and training summaries. The model is saved to `Digital/signal_classifier.pkl` after retraining.
 
 ## Digital Usage
 

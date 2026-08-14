@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import math
+import pickle
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -15,15 +17,13 @@ except ImportError:  # pragma: no cover
 
 
 class SignalClassifier:
-    def __init__(self) -> None:
-        self.model = self._train_model() if SKLEARN_AVAILABLE else None
-
-    def _train_model(self) -> Any:
-        rng = np.random.default_rng(42)
-        X, y = self._build_synthetic_dataset(rng)
-
+    def __init__(self, model_path: str | Path | None = None) -> None:
         self.class_names = ["noise", "speech_like", "ecg_like"]
-        model = Pipeline(
+        self.model_path = Path(model_path) if model_path is not None else None
+        self.model = self._load_or_train_model()
+
+    def _make_pipeline(self) -> Any:
+        return Pipeline(
             [
                 ("scaler", StandardScaler()),
                 (
@@ -32,8 +32,89 @@ class SignalClassifier:
                 ),
             ]
         )
+
+    def _load_or_train_model(self) -> Any:
+        if self.model_path is not None and self.model_path.exists():
+            try:
+                with self.model_path.open("rb") as handle:
+                    payload = pickle.load(handle)
+                if isinstance(payload, dict) and "model" in payload and "class_names" in payload:
+                    self.class_names = payload["class_names"]
+                    return payload["model"]
+                if hasattr(payload, "predict_proba"):
+                    return payload
+            except (pickle.PickleError, EOFError, AttributeError, ValueError, OSError):
+                pass
+
+        return self._train_model() if SKLEARN_AVAILABLE else None
+
+    def _train_model(self) -> Any:
+        rng = np.random.default_rng(42)
+        X, y = self._build_synthetic_dataset(rng)
+        model = self._make_pipeline()
         model.fit(X, y)
+        self.save_model(model)
         return model
+
+    def save_model(self, model: Any) -> None:
+        if self.model_path is None or not SKLEARN_AVAILABLE:
+            return
+        self.model_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.model_path.open("wb") as handle:
+            pickle.dump({"model": model, "class_names": self.class_names}, handle)
+
+    def fit_from_examples(self, examples: list[dict[str, Any]]) -> dict[str, Any]:
+        if not examples:
+            raise ValueError("at least one example is required")
+
+        features: list[np.ndarray] = []
+        labels: list[int] = []
+        label_map = {name: index for index, name in enumerate(self.class_names)}
+
+        for example in examples:
+            if "label" not in example:
+                raise ValueError("each example requires a label")
+            label = str(example["label"]).strip().lower()
+            if label not in label_map:
+                raise ValueError(f"unsupported label '{label}'. Supported labels: {self.class_names}")
+
+            samples = example.get("samples")
+            sample_rate = int(example.get("sampleRate", 48000))
+            if samples is None:
+                raise ValueError("each example requires samples")
+
+            if isinstance(samples, str):
+                try:
+                    import base64
+
+                    binary = base64.b64decode(samples)
+                    sample_array = np.frombuffer(binary, dtype=np.float32).astype(np.float32, copy=True)
+                except (TypeError, ValueError):
+                    raise ValueError("samples must be a base64 float32 buffer or an array of numbers.") from None
+            else:
+                sample_array = np.asarray(samples, dtype=np.float32)
+
+            if sample_array.size == 0:
+                raise ValueError("samples must contain at least one value")
+
+            features.append(self.extract_features(sample_array, sample_rate))
+            labels.append(label_map[label])
+
+        if len(features) < 2:
+            raise ValueError("at least two labeled examples are required for training")
+
+        X = np.vstack(features)
+        y = np.asarray(labels, dtype=np.int64)
+
+        model = self._make_pipeline()
+        model.fit(X, y)
+        self.model = model
+        self.save_model(model)
+        return {
+            "trainedExamples": len(features),
+            "classes": self.class_names,
+            "labels": [self.class_names[int(value)] for value in y],
+        }
 
     def _build_synthetic_dataset(self, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
         examples = []
@@ -68,7 +149,7 @@ class SignalClassifier:
 
     def _make_ecg_signal(self, sample_rate: int, rng: np.random.Generator) -> np.ndarray:
         heart_rate = rng.uniform(40.0, 120.0) / 60.0
-        duration = rng.uniform(2.0, 4.0)
+        duration = rng.uniform(0.2, 0.6)
         shape = int(sample_rate * duration)
         t = np.linspace(0.0, duration, shape, endpoint=False)
         period = 1.0 / heart_rate
@@ -122,14 +203,15 @@ class SignalClassifier:
 
         windowed = samples * np.hanning(samples.size)
         spectrum = np.abs(np.fft.rfft(windowed))
+        power = np.square(spectrum)  # Use power for energy ratios
         freqs = np.fft.rfftfreq(samples.size, 1.0 / sample_rate)
-        total_energy = float(np.sum(spectrum)) + 1e-12
+        total_energy = float(np.sum(power)) + 1e-12
 
         speech_mask = (freqs >= 120) & (freqs <= 3400)
-        speech_energy_ratio = float(np.sum(spectrum[speech_mask]) / total_energy)
+        speech_energy_ratio = float(np.sum(power[speech_mask]) / total_energy)
 
         ecg_mask = (freqs >= 0.5) & (freqs <= 40)
-        low_freq_energy_ratio = float(np.sum(spectrum[ecg_mask]) / total_energy)
+        low_freq_energy_ratio = float(np.sum(power[ecg_mask]) / total_energy)
 
         dominant_index = int(np.argmax(spectrum)) if spectrum.size else 0
         dominant_frequency = float(freqs[dominant_index]) if spectrum.size else 0.0
@@ -204,7 +286,7 @@ class SignalClassifier:
                 confidence = min(max(0.45 + low_freq_ratio, 0.0), 1.0)
             elif spectral_flatness > 0.7:
                 label = "noise"
-                confidence = min(max(0.7 - spectral_flatness, 0.0), 1.0)
+                confidence = min(max(spectral_flatness, 0.0), 1.0)
             else:
                 label = "speech_like"
                 confidence = min(max(0.35 + speech_ratio, 0.0), 1.0)

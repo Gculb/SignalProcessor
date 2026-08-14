@@ -102,6 +102,109 @@ h2 {
   margin-bottom: 16px;
 }
 
+.training-panel {
+  margin-bottom: 16px;
+  padding: 0;
+}
+
+.cluster-review-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  padding: 0 16px 16px;
+}
+
+.cluster-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.cluster-card h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--accent-2);
+}
+
+.cluster-card ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.cluster-card label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.cluster-card select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text);
+  padding: 8px 10px;
+}
+
+.training-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+  gap: 12px;
+  padding: 16px;
+}
+
+.training-form label {
+  display: grid;
+  gap: 6px;
+  min-height: 52px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.training-form label span,
+.training-summary {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.training-form .full-width {
+  grid-column: 1 / -1;
+}
+
+.training-form textarea,
+.training-form input,
+.training-form select {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+
+.training-form textarea {
+  min-height: 100px;
+}
+
+.training-actions {
+  display: flex;
+  gap: 12px;
+  grid-column: 1 / -1;
+}
+
+.training-summary {
+  padding: 12px 16px 18px;
+  line-height: 1.5;
+}
+
 .controls {
   grid-template-columns: auto auto auto auto repeat(3, minmax(150px, 1fr));
   align-items: end;
